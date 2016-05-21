@@ -1,5 +1,5 @@
 '''
-This is a blob tracker.  It's a very basic algorithm and is just an example on how you could track something using
+This is a blob tracker.  It's a very basic demonstration and is just an example on how you could track something using
 OpenCV's built in blob detector.  It's released under the GNU GPL v3 or later license.
 
 Copyright (C) 2016 Jaimyn Mayer (Known as "Jabelone" online)
