@@ -72,8 +72,19 @@ import pygame.mixer  # We use a function in this to play the audio
 import KalmanFilter  # stops my terrible algorithm from being so glitchy
 import configparser #  To store our settings
 import os.path #  For config file stuff
+import pythonSB as servo
+import subprocess
 from picamera.array import PiRGBArray
 from picamera import PiCamera
+
+output = subprocess.getoutput('ps -A')
+if 'servod' in output:
+    print("Servo Blaster process found.")
+else:
+    print("Servo Blaster process not found. Starting it now.")
+    os.system("echo pi | sudo service servoblaster start")
+
+servo.servo_set(16, "1500us")
 
 # Let's init all the things
 xFilter = KalmanFilter.KalmanFilter(50, 500)  # A kalman filter for x values
@@ -82,21 +93,6 @@ pygame.mixer.init()  # Required to initiliase pygame
 config = configparser.ConfigParser()
 camera = PiCamera()  # Initialise the pi camera
 time.sleep(0.1)  # Allow the camera to warm before doing anything else
-
-# Set all the settings for the pi camera
-camera.resolution = (300, 200)  # Resolution we're tracking at
-camera.framerate = 30  # Framerate we pull from the camera (normally much less than the rate at which cv is run)
-rawCapture = PiRGBArray(camera, size=(300, 200))
-# camera.rotation = 180 #You can rotate the camera by specifying the angle (ie mounted upside down)
-camera.awb_mode = 'off'  # Doesn't track properly when white balance constantly changes
-camera.awb_gains = (1.65, 1.45)  # Set the white balance gains
-camera.saturation = -35  # Set the saturation
-camera.exposure_compensation = 0  # Set the exposure compensation
-camera.shutter = 20000  # Shutter speed (see pi camera documentation)
-camera.iso = 600  # Set the ISO
-camera.contrast = 50  # Set the contrast
-camera.brightness = 60  # Set the "brightness"
-
 
 #################### Load or create a config file ####################
 if os.path.isfile("config.ini") == False:  # If we don't have a config file then we should make one
@@ -114,7 +110,8 @@ if os.path.isfile("config.ini") == False:  # If we don't have a config file then
                           'hsvWindowTitle': hsvWindowTitle,
                           'MASK': MASK,
                           'NORMAL': NORMAL,
-                          'FPS': FPS}
+                          'FPS': FPS,
+                          'PiCamRotation:': '0'}
     with open('config.ini', 'w') as configfile:
         config.write(configfile)
 else:
@@ -123,6 +120,20 @@ else:
         print("\nValid settings file found.  I will load the settings now.\n")
 
 #################### END loading config file ####################
+
+# Set all the settings for the pi camera
+camera.resolution = (300, 200)  # Resolution we're tracking at
+camera.framerate = 30  # Framerate we pull from the camera (normally much less than the rate at which cv is run)
+rawCapture = PiRGBArray(camera, size=(300, 200))
+camera.rotation = config['Settings']['PiCamRotation'] #You can rotate the camera by specifying the angle (ie mounted upside down)
+camera.awb_mode = 'off'  # Doesn't track properly when white balance constantly changes
+camera.awb_gains = (1.65, 1.45)  # Set the white balance gains
+camera.saturation = -35  # Set the saturation
+camera.exposure_compensation = 0  # Set the exposure compensation
+camera.shutter = 20000  # Shutter speed (see pi camera documentation)
+camera.iso = 600  # Set the ISO
+camera.contrast = 50  # Set the contrast
+camera.brightness = 60  # Set the "brightness"
 
 # These are just normal variables for holding all the things, don't touch if you want the program to run
 areaArray = []  # For storing the area of our countours
@@ -258,6 +269,19 @@ for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=
 
         printVals = "Filtered X: " + str(int(filteredX)) + " Filtered Y: " + str(int(filteredY))
         print("\r\x1b[2K" + printVals + " FPS: " + str(int(fps)), end="")  # Print the filtered values and FPS
+
+        if filteredX < 135 and filteredX > 120:
+            servo.servo_set(16, "+10us")
+
+        elif filteredX > 165 and filteredX < 180:
+            servo.servo_set(16, "-10us")
+
+        elif filteredX < 120:
+            servo.servo_set(16, "+40us")
+
+        elif filteredX > 180:
+            servo.servo_set(16, "-40us")
+
         final = cv2.circle(final, (int(filteredX), 10), 10, (0, 255, 0),
                            -1)  # Draw a circle representing servo position
         hsv = cv2.circle(hsv, (int(filteredX), 10), 10, (0, 255, 0),

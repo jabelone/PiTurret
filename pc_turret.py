@@ -98,7 +98,8 @@ if os.path.isfile("config.ini") == False:  # If we don't have a config file then
                           'hsvWindowTitle': hsvWindowTitle,
                           'MASK': MASK,
                           'NORMAL': NORMAL,
-                          'FPS': FPS}
+                          'FPS': FPS,
+                          'PiCamRotation': '0'}
     with open('config.ini', 'w') as configfile:
         config.write(configfile)
 else:
@@ -256,10 +257,10 @@ while True:
 
 
     if NORMAL:
-        cv2.imshow(mainWindowTitle, final)  # Draw the filtered x cord onto the bottom, mimicking the servo output
+        cv2.imshow(mainWindowTitle, final)  # Draw the filtered x cord onto the top, mimicking the servo output
 
     if MASK:
-        cv2.imshow("Portal Turret Mask", mask)  # Draw the filtered x cord onto the bottom, mimicking the servo output
+        cv2.imshow("Portal Turret Mask", mask)  # Draw the filtered x cord onto the top, mimicking the servo output
 
     if HSV:  # If we should draw the HSV window
         cv2.imshow("Portal Turret HSV", hsv)  # Enable and double click anywhere on screen to print HSV values to console
