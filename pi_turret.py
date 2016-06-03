@@ -35,6 +35,11 @@ MASK = 0 # Set to true to display a window with the thresholded "mask"
 NORMAL = 1 # Set to true to display the webcam feed with servo position indicator
 FPS = 1  # Set to True to print out the estimated FPS
 
+Pval = 0.025
+Ival = 0.027
+Dval = 0.042
+pid = PID(p=Pval, i=Ival, d=Dval, integrator_max=50, integrator_min=-50)
+
 searchAudioFiles = ["audio/turret_autosearch_6.wav",
                     "audio/turret_autosearch_5.wav",
                     "audio/turret_autosearch_4.wav",
@@ -74,6 +79,7 @@ import configparser #  To store our settings
 import os.path #  For config file stuff
 import pythonSB as servo
 import subprocess
+import PID
 from picamera.array import PiRGBArray
 from picamera import PiCamera
 
@@ -270,7 +276,9 @@ for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=
         printVals = "Filtered X: " + str(int(filteredX)) + " Filtered Y: " + str(int(filteredY))
         print("\r\x1b[2K" + printVals + " FPS: " + str(int(fps)), end="")  # Print the filtered values and FPS
 
-        if filteredX < 135 and filteredX > 120:
+
+
+        if filteredX < 145 and filteredX > 155:
             servo.servo_set(16, "+10us")
 
         elif filteredX > 165 and filteredX < 180:
