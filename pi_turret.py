@@ -19,26 +19,24 @@ This file is part of PortalTurret.
     You should have received a copy of the GNU General Public License
     along with PortalTurret.  If not, see <http://www.gnu.org/licenses/>.
 '''
+################################################# IMPORT ALL THE THINGS ################################################
+########################################################################################################################
+import random  # needed to pick a "random" audio file to play
+import time  # keep track of things
+import cv2  # We kind of need this for cv
+import pygame.mixer  # We use a function in this to play the audio
+import KalmanFilter  # stops my terrible algorithm from being so glitchy
+import configparser #  To store our settings
+import os.path #  For config file stuff
+import pythonSB as servo
+import subprocess
+from picamera.array import PiRGBArray
+from picamera import PiCamera
 
 ################################################## USER CONFIGURATION ##################################################
 ########################################################################################################################
 # You may wish to configure the value of any of the variables below.
-thresholdLower = (10, 210, 190) # The lower threshold for thresholding
-thresholdUpper = (30, 240, 220)  # The upper threshold for thresholding
-calibrateFactor = 10 #  The amount to add and subtract from the mean threshold value.  (to get the min and max)
-targetLostMessage = "TARGET LOST. Auto Search Mode Activated. "  # What the console should say when it's in search mode
-targetFoundMessage = "TARGET AQUIRED. Dispensing product."  # What the console should say when it's in firing mode
-mainWindowTitle = "Portal Turret v1"
-hsvWindowTitle = "Portal Turret HSV"
-HSV = 1 # Set to True to display a window with HSV colours, double click to print a pixel's HSV value to console
-MASK = 0 # Set to true to display a window with the thresholded "mask"
-NORMAL = 1 # Set to true to display the webcam feed with servo position indicator
-FPS = 1  # Set to True to print out the estimated FPS
-
-Pval = 0.025
-Ival = 0.027
-Dval = 0.042
-pid = PID(p=Pval, i=Ival, d=Dval, integrator_max=50, integrator_min=-50)
+cascPath = "faces.xml"
 
 searchAudioFiles = ["audio/turret_autosearch_6.wav",
                     "audio/turret_autosearch_5.wav",
@@ -70,19 +68,9 @@ fireAudioFiles = ["audio/turret_active_6.wav",
 ##################################################### START SETUP ######################################################
 ########################################################################################################################
 
-import random  # needed to pick a "random" audio file to play
-import time  # keep track of things
-import cv2  # We kind of need this for cv
-import pygame.mixer  # We use a function in this to play the audio
-import KalmanFilter  # stops my terrible algorithm from being so glitchy
-import configparser #  To store our settings
-import os.path #  For config file stuff
-import pythonSB as servo
-import subprocess
-import PID
-from picamera.array import PiRGBArray
-from picamera import PiCamera
-
+# Apparently this lies.  It does not start the servo blaster process properly so start it yourself.
+# I have no idea why as this same code snippet worked on another project and I can't be bothered
+# sorting it out right now.
 output = subprocess.getoutput('ps -A')
 if 'servod' in output:
     print("Servo Blaster process found.")
@@ -95,6 +83,7 @@ servo.servo_set(16, "1500us")
 # Let's init all the things
 xFilter = KalmanFilter.KalmanFilter(50, 500)  # A kalman filter for x values
 yFilter = KalmanFilter.KalmanFilter(50, 500)  # A kalman filter for y values, because *why* not? ;)
+faceCascade = cv2.CascadeClassifier(cascPath) # Start an instance of the cascade classifier
 pygame.mixer.init()  # Required to initiliase pygame
 config = configparser.ConfigParser()
 camera = PiCamera()  # Initialise the pi camera
@@ -102,22 +91,34 @@ time.sleep(0.1)  # Allow the camera to warm before doing anything else
 
 #################### Load or create a config file ####################
 if os.path.isfile("config.ini") == False:  # If we don't have a config file then we should make one
-    print("\nNo config file was found. I just tried to make one and load it with defaults now.\n")
-    config['Settings'] = {'thresholdLowerH': '0',
-                          'thresholdLowerS': '0',
-                          'thresholdLowerV': '0',
-                          'thresholdUpperH': '100',
-                          'thresholdUpperS': '100',
-                          'thresholdUpperV': '100',
-                          'calibrateFactor': calibrateFactor,
-                          'targetFoundMessage': targetFoundMessage,
-                          'targetLostMessage': targetLostMessage,
-                          'mainWindowTitle': mainWindowTitle,
-                          'hsvWindowTitle': hsvWindowTitle,
-                          'MASK': MASK,
-                          'NORMAL': NORMAL,
-                          'FPS': FPS,
-                          'PiCamRotation:': '0'}
+    print("\nNo config file was found. I just tried to make one and load it with defaults.\n")
+    config['Settings'] = {'targetFoundMessage': 'TARGET AQUIRED. Dispensing product.',
+                          'targetLostMessage': 'TARGET LOST. Auto Search Mode Activated.',
+                          'mainWindowTitle': 'Portal Turret v1',
+                          'NORMAL': '1',
+                          'FPS': '1',
+                          'PiCam-Manual-Settings': 'False',  # True or False to use manual pi camera options
+                          'cascade-path': 'faces.xml'
+                          }
+
+    config['Camera'] = {'cam-xres': '300',
+                        'cam-yres': '300',
+                        'cam-framerate': '30',
+                        'cam-xres': '300',
+                        'cam-rotation:': '0',
+                        'cam-awb:': 'off',
+                        'cam-awb-gains1:': '1.65',
+                        'cam-awb-gains2:': '1.45',
+                        'cam-saturation:': '-35',
+                        'cam-exposure:': '0',
+                        'cam-shutterspeed:': '20000',
+                        'cam-iso:': '600',
+                        'cam-contrast:': '50',
+                        'cam-brightness:': '60'}
+
+    config['Webcam'] = {'webcam-xres': '1280',
+                        'webcam-yres': '720',}
+
     with open('config.ini', 'w') as configfile:
         config.write(configfile)
 else:
@@ -125,82 +126,37 @@ else:
     if "Settings" in config:
         print("\nValid settings file found.  I will load the settings now.\n")
 
-#################### END loading config file ####################
+if config['Settings']['PiCam-Manual-Settings']:
+    # Set all the settings for the pi camera
+    camera.resolution = (int(config['Camera']['cam-xres']), int(config['Camera']['cam-yres']))  # Resolution we're tracking at
+    camera.framerate = int(config['Camera']['cam-framerate']) # Framerate we pull from the camera (normally much less than the
+    # rate at which cv is run)
+    rawCapture = PiRGBArray(camera, size=(int(config['Camera']['cam-xres']), int(config['Camera']['cam-yres'])))
+    camera.rotation = int(config['Camera']['cam-rotation'])  # You can rotate the camera by specifying the angle (ie mounted
+    # upside down)
+    #camera.awb_mode = config['Camera']['cam-awb']  # Doesn't track properly when white balance constantly changes
+    camera.awb_gains = (float(config['Camera']['cam-awb-gains1']),
+                        float(config['Camera']['cam-awb-gains2']))  # Set the white balance gains
+    camera.saturation = int(config['Camera']['cam-saturation'])  # Set the saturation
+    camera.exposure_compensation = int(config['Camera']['cam-exposure'])  # Set the exposure compensation
+    camera.shutter = int(config['Camera']['cam-shutterspeed'])  # Shutter speed (see pi camera documentation)
+    camera.iso = int(config['Camera']['cam-iso'])  # Set the ISO
+    camera.contrast = int(config['Camera']['cam-contrast'])  # Set the contrast
+    camera.brightness = int(config['Camera']['cam-brightness'])  # Set the "brightness"
+    cascPath = config['Settings']['cascade-path']
 
-# Set all the settings for the pi camera
-camera.resolution = (300, 200)  # Resolution we're tracking at
-camera.framerate = 30  # Framerate we pull from the camera (normally much less than the rate at which cv is run)
-rawCapture = PiRGBArray(camera, size=(300, 200))
-camera.rotation = config['Settings']['PiCamRotation'] #You can rotate the camera by specifying the angle (ie mounted upside down)
-camera.awb_mode = 'off'  # Doesn't track properly when white balance constantly changes
-camera.awb_gains = (1.65, 1.45)  # Set the white balance gains
-camera.saturation = -35  # Set the saturation
-camera.exposure_compensation = 0  # Set the exposure compensation
-camera.shutter = 20000  # Shutter speed (see pi camera documentation)
-camera.iso = 600  # Set the ISO
-camera.contrast = 50  # Set the contrast
-camera.brightness = 60  # Set the "brightness"
+#################### END loading config file and setting camera options ####################
+
+faceCascade = cv2.CascadeClassifier(cascPath)  # Create an instance of our cascade classifier
 
 # These are just normal variables for holding all the things, don't touch if you want the program to run
-areaArray = []  # For storing the area of our countours
 lastTime = 0  # Last time we stored the time of the frame (for FPS calculations)
 lastSeen = 0  # Keep track of when we saw the target
 fps = 1  # Things break if a default value isn't set and you disable FPS calculations
 searchLastPlayed = 0  # When a "searching" phrase was last played
 playGunSound = False  # Used to start the gun sound after we play a random phrase
 filteredX, filteredY = 0, 0  # These variables will store the value of the x,y cords passed through the kalman filter
-
-# Callback function for mouse, prints HSV values to console
-def print_hsv(event, x, y, flags, param):
-    global hsv, frame, xi, yi
-
-    if event == cv2.EVENT_LBUTTONDBLCLK:  # If it was a double left click
-        xi, yi = x, y  # Make the cords into the global variables
-        frame = cv2.circle(frame, (xi, yi), 10, (0, 0, 0), -1)  # Draw green circle on click position
-        # Prints colour of pixel, remember these are HSV, not RGB values
-        print("H,S,V: " + str(hsv.item(y, x, 0)) + "," + str(hsv.item(y, x, 1)) + "," + str(hsv.item(y, x, 2)))
-
-def calibrate_hsv(event, x, y, flags, param):
-
-    if event == cv2.EVENT_LBUTTONDBLCLK:
-        global hsv, frame
-
-        blurred = cv2.GaussianBlur(frame, (15, 15), 0)  # Blur the frame to remove high frequency noise
-        hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)  # Convert frame to the HSV colourspace
-        x2,y2 = x+10,y+10
-        h, s, v = cv2.split(hsv[y:y2, x:x2])
-        h, s, v = h.mean()-calibrateFactor, s.mean()-calibrateFactor, v.mean()-calibrateFactor
-        if h < 0: h = 0
-        if s < 0: s = 0
-        if v < 0: v = 0
-
-        config['Settings']['thresholdLowerH'] = str(h)
-        config['Settings']['thresholdLowerS'] = str(s)
-        config['Settings']['thresholdLowerV'] = str(v)
-        config['Settings']['thresholdUpperH'] = str(h+calibrateFactor*2)
-        config['Settings']['thresholdUpperS'] = str(s+calibrateFactor*2)
-        config['Settings']['thresholdUpperV'] = str(v+calibrateFactor*2)
-
-        with open('config.ini', 'w') as configfile:
-            config.write(configfile)  # Write to the config file and reload it
-        config.read('config.ini')
-        if "Settings" in config:
-            print("\nSuccessfully wrote these values to the config file:")
-
-            print('Lower H: ', config['Settings']['thresholdLowerH'])
-            print('Lower S: ', config['Settings']['thresholdLowerS'])
-            print('Lower V: ', config['Settings']['thresholdLowerV'])
-            print('Upper H: ', config['Settings']['thresholdUpperH'])
-            print('Upper S: ', config['Settings']['thresholdUpperS'])
-            print('Upper V: ', config['Settings']['thresholdUpperV'])
-
-cv2.namedWindow(mainWindowTitle)  # Setup a blank window
-cv2.setMouseCallback(mainWindowTitle, calibrate_hsv)  # Attach the mouse callback function
-
-# Should we setup the HSV window?
-if HSV:
-    cv2.namedWindow(hsvWindowTitle)  # Setup a blank window
-    cv2.setMouseCallback(hsvWindowTitle, print_hsv)  # Attach the mouse callback function
+faceX, faceW = 0,2 # We may get a division by zero error if there are no faces
 
 ###################################################### END SETUP #######################################################
 ########################################################################################################################
@@ -212,87 +168,87 @@ for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=
     final = frame  # create the variable to hold our final frame
     thisTime = int(time.time() * 1000)  # record when we capture the new frame for fps calculations
 
-    if FPS:  # If we are doing FPS calculations
+    if config['Settings']['FPS']:  # If we are doing FPS calculations
         fps = thisTime - lastTime  # Work out time between this and the last frame
         lastTime = thisTime  # Store what time this frame was at
         fps = 1000 / fps  # Conver the time to FPS
     else:
         fps = 1  # If we aren't doing fps calculations set to 1 or things break
 
-    ##### Process the frame #####
-    blurred = cv2.GaussianBlur(frame, (11, 11), 0)  # Blur the frame to remove high frequency noise
-    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)  # Convert frame to the HSV colorspace
-    mask = cv2.inRange(hsv, (float(config['Settings']['thresholdLowerH']),
-                             float(config['Settings']['thresholdLowerS']),
-                             float(config['Settings']['thresholdLowerV'])),
-                       thresholdUpper)  # Do the actual thresholding
+    #################### Process the frame ####################
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)  # Convert to gray
 
-    # To be honest these next two functions don't do much and decrease fps by about 10%
-    mask = cv2.erode(mask, None, iterations=3)  # Do some more filtering
-    mask = cv2.dilate(mask, None, iterations=3)  # Do some even more filtering
+    faces = faceCascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30),
+        flags=cv2.CASCADE_SCALE_IMAGE
+    )
 
-    _, contours, _ = cv2.findContours(mask.copy(), 1, 2)  # Find the contours
+    for (x, y, w, h) in faces:
+        global faceX, faceW
 
-    if not contours:  # If there isn't any contours (targets) detected
+        cv2.rectangle(final, (x, y), (x + w, y + h), (0, 255, 0), 2)
+        # print("Face Detected at:", x + (w / 2))  # Print a message that we found a face
+        faceX, faceW = x, w
+
+    if len(faces) < 1:
+        faceX = 0
+
+    if faceX < 1:  # If there isn't any contours (targets) deteceted
         if thisTime - lastSeen > 100:  # If it's been at least 1 second since last time
             if thisTime - searchLastPlayed > 5000:  # If it's been at least 5 seconds since last time
                 searchLastPlayed = int(round(time.time() * 1000))  # Record the current time
                 pygame.mixer.music.load(searchAudioFiles[random.randint(0, 7)])  # Select a phrase at random
                 pygame.mixer.music.play()  # Play the randomly selected phrase
                 scanningMode = True
-                print("\r\x1b[2K" + targetLostMessage + " FPS: " + str(int(fps)), end="")  # Print target lost message and the FPS
+                print("\r\x1b[2K" + config['Settings']['targetlostmessage'] + " FPS: " + str(int(fps)),
+                      end="")  # Print target lost message and the FPS
         final = cv2.circle(final, (int(filteredX), 10), 10, (0, 0, 255),
-                           -1)  # Draw a circle representing servo position
-        hsv = cv2.circle(hsv, (int(filteredX), 10), 10, (0, 0, 255),
                            -1)  # Draw a circle representing servo position
 
     else:  # If a contour has been detected
 
         if thisTime - lastSeen > 1000:  # If it's been at least 1 second since last time
             activeLastPlayed = int(round(time.time() * 1000))  # Record the current time
-            print("\r" + targetFoundMessage + " FPS: " + str(int(fps)), end="")  # Print the target found message and FPS
+            print("\r" + config['Settings']['targetfoundmessage'] + " FPS: " + str(int(fps)),
+                  end="")  # Print the target found message and FPS
             pygame.mixer.music.load(fireAudioFiles[random.randint(0, 14)])  # Load a randomly selected phrase
             pygame.mixer.music.play()  # Play the randomly selected phrase
             scanningMode = False
 
-        # Find the area of each contour
-        for i, c in enumerate(contours):  # Loop over every contour
-            area = cv2.contourArea(c)  # Calculated the area
-            areaArray.append(area)  # Store it in the list
-
-        # Find the largest contour
-        sorteddata = sorted(zip(areaArray, contours), key=lambda x: x[0], reverse=True)  # Sort the list
-        largestcontour = sorteddata[0][1]  # Largest contour is the first one in the list
-        x, y, w, h = cv2.boundingRect(largestcontour)  # Store the data about it
-
         # Filter and return the xValue
-        xFilter.input_latest_noisy_measurement(x)  # x is the unfiltered value
+        xFilter.input_latest_noisy_measurement(faceX + faceW / 2)  # x is the unfiltered value
         filteredX = xFilter.get_latest_estimated_measurement()  # request the filtered value
 
         # Filter and return the yValue
-        yFilter.input_latest_noisy_measurement(y)  # y is the unfiltered value
-        filteredY = yFilter.get_latest_estimated_measurement()  # request the filtered value
+        # Left here in case someone wants to track in the Y direction also
+        # yFilter.input_latest_noisy_measurement(y)  # y is the unfiltered value
+        # filteredY = yFilter.get_latest_estimated_measurement()  # request the filtered value
 
         printVals = "Filtered X: " + str(int(filteredX)) + " Filtered Y: " + str(int(filteredY))
         print("\r\x1b[2K" + printVals + " FPS: " + str(int(fps)), end="")  # Print the filtered values and FPS
 
-
-
-        if filteredX < 145 and filteredX > 155:
-            servo.servo_set(16, "+10us")
-
-        elif filteredX > 165 and filteredX < 180:
-            servo.servo_set(16, "-10us")
-
-        elif filteredX < 120:
+        # Un comment the following print statements for debugging
+        if filteredX < 120:
             servo.servo_set(16, "+40us")
+            # print("Servo +40us")
+
+        elif filteredX < 140:
+            servo.servo_set(16, "+40us")
+            # print("Servo +40us")
 
         elif filteredX > 180:
             servo.servo_set(16, "-40us")
+            # print("Servo -40us")
+
+        elif filteredX > 165:
+            servo.servo_set(16, "-10us")
+            # print("Servo -10us")
+
 
         final = cv2.circle(final, (int(filteredX), 10), 10, (0, 255, 0),
-                           -1)  # Draw a circle representing servo position
-        hsv = cv2.circle(hsv, (int(filteredX), 10), 10, (0, 255, 0),
                            -1)  # Draw a circle representing servo position
         lastSeen = int(round(time.time() * 1000))  # Store when we last saw the target
         if pygame.mixer.music.get_busy() == True:  # If music is already playing
@@ -305,15 +261,8 @@ for frame in camera.capture_continuous(rawCapture, format="bgr", use_video_port=
         pygame.mixer.music.play()  # Play the firing sounds
         playGunSound = False  # Set to false cause we just played it
 
-    if NORMAL:
-        cv2.imshow(mainWindowTitle, final)  # Draw the filtered x cord onto the bottom, mimicking the servo output
-
-    if MASK:
-        cv2.imshow("Portal Turret Mask", mask)  # Draw the filtered x cord onto the bottom, mimicking the servo output
-
-    if HSV:  # If we should draw the HSV window
-        cv2.imshow("Portal Turret HSV",
-                   hsv)  # Enable and double click anywhere on screen to print HSV values to console
+    cv2.imshow(config['Settings']['mainWindowTitle'],
+               final)  # Draw the filtered x cord onto the bottom, mimicking the servo output
 
     key = cv2.waitKey(1) & 0xFF
 
